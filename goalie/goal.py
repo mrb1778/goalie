@@ -98,7 +98,7 @@ class GoalDefinition:
             elif param.default is not None:
                 run_kwargs[name] = param.default
             # todo: required but not found?
-
+        # print("goal.py::execute:101:", self.name,  run_args, run_kwargs, ":(run_args, run_kwargs)")
         return self.executor(*run_args, **run_kwargs)
 
     def from_json(self, json):
@@ -305,7 +305,7 @@ class DuplicateGoal(Exception):
 
 
 class UnmetGoal(Exception):
-    def __init__(self, goal, phase: Literal["run", "pre", "param", "post"], message: str) -> None:
+    def __init__(self, goal: GoalDefinition, phase: Literal["run", "pre", "param", "post"], message: str) -> None:
         super().__init__(goal, phase, message)
         self.goal = goal
         self.phase = phase
@@ -337,7 +337,7 @@ class GoalScope:
 
 class GoalRunContext:
     def __init__(self,
-                 goal: Optional[str] = None,
+                 goal: Optional[GoalDefinition] = None,
                  scope: Optional[str] = None,
                  phase: Optional[str] = None,
                  parent: Optional[GoalRunContext] = None,
@@ -586,16 +586,10 @@ class GoalManager:
             **kwargs):
 
         scope = self.get_scope(scope)
-
         goal_def = self.get(goal, scope=scope)
-        if goal_def is None:
-            raise UnmetGoal(goal,
-                            phase="run",
-                            message=f"Error in run goal is missing")
-
         scope = goal_def.scope
 
-        context = GoalRunContext(goal=goal,
+        context = GoalRunContext(goal=goal_def,
                                  scope=scope,
                                  parent=context,
                                  phase="Run")
@@ -639,10 +633,10 @@ class GoalManager:
             except Exception as e:
                 print('Unmet', {**param_value.goal_inputs,
                                 **updated_kwargs})
-                raise UnmetGoal(goal,
+                raise UnmetGoal(goal_def,
                                 phase="param",
                                 message=f"Error in param {goal}({param_name}:{param_goal.name}) -> {e}") from e
-        self.log(context, "Run")
+        self.log(context, "Run", updated_kwargs)
 
         result = goal_def.execute(updated_kwargs)
 
@@ -654,9 +648,9 @@ class GoalManager:
                                   fun_kwargs=fun_kwargs)
                 results.append(result)
             except Exception as e:
-                raise UnmetGoal(goal=goal, phase="post", message="Error in post") from e
+                raise UnmetGoal(goal=goal_def, phase="post", message="Error in post") from e
 
-        self.log(context, "End")
+        self.log(context, "End", result)
         return result
 
         # updated_kwargs[param_name] = lambda **param_invoke_kwargs: self._run(
@@ -692,9 +686,9 @@ class GoalManager:
 
     def log(self, context, action, *args):
         if self.print_logs:
-            pyu.print_bordered(*(context.level * '-'),
-                               f"Goal: {context.goal}",
-                               *((context.scope, "::") if context.scope is not None else ()),
+            pyu.print_bordered("Goal",
+                               *(context.level * '-'),
+                               f"{context.scope if context.scope is not None else '<GLOBAL>'}.{context.goal.name}",
                                action,
                                f"Time: {time.time() - context.start_time}",
                                *args)
