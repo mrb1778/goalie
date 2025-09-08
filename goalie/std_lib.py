@@ -18,7 +18,7 @@ def init_lib(goal: GoalManager, scope: str):
         return "Hello Goal World!"
 
     @goal(scope=scope)
-    def echo(value: str = "echo") -> str:
+    def echo(value: Any = "echo") -> Any:
         return value
 
     @goal(name="print", scope=scope)
@@ -30,6 +30,10 @@ def init_lib(goal: GoalManager, scope: str):
         else:
             print(what)
             return what
+
+    @goal(name="dict", scope=scope)
+    def _dict(**kwargs) -> Dict:
+        return kwargs
 
     @goal(name="range", scope=scope)
     def _range(start: int = 0, stop: int = 10) -> range:
@@ -138,16 +142,53 @@ def init_lib(goal: GoalManager, scope: str):
             result = None
             kwargs = kwargs.copy()
             for name, do_item in do.items():
-                result = do_item(**kwargs)
+                if isinstance(do_item, Callable):
+                    result = do_item(**kwargs)
+                else:
+                    result = do_item
                 kwargs[name] = result
             return result
         elif isinstance(do, Iterable):
             last_result = None
             for do_item in do:
-                last_result = do_item(**kwargs)
+                if do_item is None:
+                    raise ValueError(f"Invalid Loop Item {do_item} in {do}")
+                elif isinstance(do_item, Callable):
+                    last_result = do_item(**kwargs)
+                else:
+                    raise ValueError(f"Invalid do_item {do_item}, must be Callable")
             return last_result
         else:
             raise ValueError(f"Invalid do {do}, must be Callable, Dict[str, Callable], or Iterable[Callable]")
+
+    @goal(name="do", scope=scope)
+    def _do(what: Union[Callable, Dict[str, Callable], Iterable[Callable]]):
+        if isinstance(what, Callable):
+            return what()
+        elif isinstance(what, Dict):
+            result = None
+            kwargs = {}
+            for name, do_item in what.items():
+                if isinstance(do_item, Callable):
+                    result = do_item(**kwargs)
+                else:
+                    result = do_item
+                kwargs[name] = result
+            return result
+        elif isinstance(what, Iterable):
+            result = None
+            kwargs = {}
+            for do_item in what:
+                if do_item is None:
+                    raise ValueError(f"Invalid Loop Item {do_item} in {what}")
+                elif isinstance(do_item, Callable):
+                    result = do_item(**kwargs)
+                else:
+                    raise ValueError(f"Invalid do_item {do_item}, must be Callable")
+                kwargs["last"] = result
+            return result
+        else:
+            raise ValueError(f"Invalid do {what}, must be Callable, Dict[str, Callable], or Iterable[Callable]")
 
     @goal(scope=scope)
     def loop(over: Union[Iterable[Any], Dict[str, Iterable[Any]]],

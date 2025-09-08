@@ -24,36 +24,36 @@ def run_from_arg_parse(goal_manager: GoalManager,
                                        scope=scope,
                                        custom_inputs=custom_inputs,
                                        **kwargs)
-    args = pyu.parse_unknown_args(arg_parser)
-    args = pyu.remove_na_from_dict(args)
+    parsed_args = pyu.parse_unknown_args(arg_parser)
+    parsed_args = pyu.remove_na_from_dict(parsed_args)
     # for goal_name in goal_names:
     #     self._create_arg_parser_params(arg_parser=arg_parser,
     #                                    default_goal=goal_name,
     #                                    scope=scope,
     #                                    custom_inputs=custom_inputs,
     #                                    enforced_required=True)
-    # args = arg_parser.parse_args()
+    # parsed_args = arg_parser.parse_args()
 
     result = None
-    if "debug" in args:
-        if args["debug"]:
-            goal_manager.debug(args["debug"])
-    if "goal_config" in args:
-        goal_config = args["goal_config"]
-        del args['goal_config']
+    if "debug" in parsed_args:
+        if parsed_args["debug"]:
+            goal_manager.debug(parsed_args["debug"])
+    if "goal_config" in parsed_args:
+        goal_config = parsed_args["goal_config"]
+        del parsed_args['goal_config']
         result = run_batch(goal_manager=goal_manager,
                            path=goal_config,
                            scope=scope,
-                           run_kwargs={**kwargs, **args})
-    elif "goal" in args:
-        goal_name = args["goal"]
+                           run_kwargs={**kwargs, **parsed_args})
+    elif "goal" in parsed_args:
+        goal_name = parsed_args["goal"]
         # goal_names = goal_name.split(" ")
-        del args['goal']
+        del parsed_args['goal']
 
-        if args["inspect"]:
+        if parsed_args["inspect"]:
             print(*(next(iter(goal_manager.find(goals=[goal_name], scope=scope).values())).referenced()))
         else:
-            result = goal_manager.run(goal_name, scope=scope, **{**kwargs, **args})
+            result = goal_manager.run(goal_name, scope=scope, **{**kwargs, **parsed_args})
     else:
         raise ValueError("no goal or json specified")
 

@@ -80,11 +80,11 @@ class GoalDefinition:
         self.executor_has_args_param = any(param.args for param in self.params.values())
         self.executor_has_kwargs_param = any(param.kwargs for param in self.params.values())
 
-    def execute(self, possible_kwargs):
+    def execute(self, context: GoalRunContext = None, possible_kwargs: Dict[str, Any] = None):
         run_args = []
         run_kwargs = {}
         for name, param in self.params.items():
-            if name in possible_kwargs:
+            if possible_kwargs is not None and name in possible_kwargs:
                 value = possible_kwargs[name]
                 if self.executor_has_args_param:
                     if param.args:
@@ -213,6 +213,9 @@ class CurriedGoal(GoalDefinition):
     def __call__(self, **kwargs):
         return self.goal(**{**self.fun_kwargs, **self.kwargs, **kwargs})
 
+    def __str__(self) -> str:
+        return f"{super().__str__()}: {self.goal} {self.fun_kwargs} {self.kwargs}"
+
 
 class GoalRef(typing.NamedTuple):
     goal: str
@@ -305,16 +308,34 @@ class DuplicateGoal(Exception):
 
 
 class UnmetGoal(Exception):
-    def __init__(self, goal: GoalDefinition, phase: Literal["run", "pre", "param", "post"], message: str) -> None:
-        super().__init__(goal, phase, message)
+    def __init__(self,
+                 goal: GoalDefinition,
+                 context: GoalRunContext,
+                 message: str) -> None:
+        super().__init__(goal, message)
         self.goal = goal
-        self.phase = phase
+        self.context = context
         self.message = message
 
     def __str__(self) -> str:
-        str_value = f"UnmetGoal({self.phase}:{self.goal})\n-->{self.__cause__.__str__()}\n"
-        if isinstance(self.__cause__, self.__class__):
-            str_value += self.message
+        str_value = f"UnmetGoal({self.context.phase}:{self.goal})"
+        _cause = self.__cause__
+        if _cause is not None:
+            str_value += "\n\tCause: "
+
+            indent = 1
+            while _cause is not None:
+                str_value += "\n" + ("\t" * indent) + "-->"
+                if isinstance(_cause, self.__class__):
+                    str_value += f"UnmetGoal({_cause.context.phase}:{_cause.goal}): {_cause.message}"
+                else:
+                    str_value += _cause.__str__()
+                _cause = _cause.__cause__
+                indent += 1
+
+        stack = self.context.call_stack()
+        if stack:
+            str_value += "\n\tStack -> " + '->'.join([str(g.goal) for g in stack])
         return str_value
 
 
@@ -343,19 +364,23 @@ class GoalRunContext:
                  parent: Optional[GoalRunContext] = None,
                  fun_kwargs: Optional[Dict[str, Any]] = None) -> None:
         super().__init__()
-        self.goal = goal
-        self.scope = scope
-        self.phase = phase
+        self.goal: GoalDefinition = goal
+        self.scope: str = scope
+        self.phase: str = phase
 
-        if parent is None:
-            self.level: int = 0
-        else:
-            self.parent: GoalRunContext = parent
-            self.level = self.parent.level + 1
+        self.parent: GoalRunContext = parent
+        self.level: int = self.parent.level + 1 if self.parent is not None else 0
+        self.fun_kwargs: Dict[str, Any] = fun_kwargs if fun_kwargs is not None else dict()
 
-        self.fun_kwargs = fun_kwargs if fun_kwargs is not None else dict()
+        self.start_time: float = time.time()
 
-        self.start_time = time.time()
+    def call_stack(self) -> List[GoalRunContext]:
+        stack = []
+        p = self.parent
+        while p is not None:
+            stack.append(p)
+            p = p.parent
+        return stack
 
 
 class GoalManager:
@@ -392,24 +417,28 @@ class GoalManager:
         #                         goals=[goal],
         #                         fail_if_missing=fail_if_missing)
         # return next(iter(found_goals.values()))
+        goal_def = None
         if isinstance(goal, GoalDefinition):
-            return goal
+            goal_def = goal
         elif isinstance(goal, str):
             if goal in self.lib.get(scope):
-                return self.lib.get(scope)[goal]
+                goal_def = self.lib.get(scope)[goal]
             elif goal in self.core_lib.get(self.SCOPE_STANDARD):
-                return self.core_lib.get(self.SCOPE_STANDARD)[goal]
+                goal_def = self.core_lib.get(self.SCOPE_STANDARD)[goal]
             else:
                 if "." in goal:
                     scope_goal = goal.rsplit('.', 1)
                     if len(scope_goal) == 2:
                         split_scope, split_goal = scope_goal
                         if split_goal in self.lib.get(split_scope):
-                            return self.lib.get(split_scope)[split_goal]
+                            goal_def = self.lib.get(split_scope)[split_goal]
         else:
             raise ValueError(f"{goal} is not a valid goal type")
 
-        raise MissingGoal(goal, scope)
+        if goal_def is None:
+            raise MissingGoal(goal, scope)
+
+        return goal_def
 
     def find(self,
              scope: Optional[str] = None,
@@ -494,6 +523,7 @@ class GoalManager:
 
         scope = self.get_scope(scope)
 
+        @functools.wraps(function)
         def decorator_goal(fun: Callable):
             nonlocal name
             if name is None:
@@ -582,7 +612,7 @@ class GoalManager:
             goal: Union[str, GoalDefinition] = None,
             scope: Optional[str] = None,
             context: Optional[GoalRunContext] = None,
-            fun_kwargs: Optional[Dict[str, Any]] = None,
+            fun_kwargs: Optional[Union[List[Any, Dict[str, Any]]]] = None,
             **kwargs):
 
         scope = self.get_scope(scope)
@@ -594,15 +624,16 @@ class GoalManager:
                                  parent=context,
                                  phase="Run")
 
-        # self.log(context, "fun_kwargs", fun_kwargs)
-        fun_kwargs = {
-            **(fun_kwargs if fun_kwargs is not None else {}),
-            **kwargs
-        }
-
-        # self.log(context, "Start", fun_kwargs)
         self.log(context, "Start")
 
+        if fun_kwargs is None:
+            fun_kwargs = {}
+        elif isinstance(fun_kwargs, List):
+            fun_kwargs = dict(zip(goal_def.params.keys(), fun_kwargs))
+        elif isinstance(fun_kwargs, Dict):
+            fun_kwargs = fun_kwargs.copy()
+
+        fun_kwargs.update(kwargs)
         updated_kwargs = fun_kwargs.copy()
 
         results = []
@@ -614,7 +645,9 @@ class GoalManager:
                                   fun_kwargs=fun_kwargs)
                 results.append(result)
             except Exception as e:
-                raise UnmetGoal(goal=pre, phase="pre", message="Pre Failed") from e
+                raise UnmetGoal(goal=pre,
+                                context=context,
+                                message="Pre Failed") from e
 
         for param_name, param_value in goal_def.params_with_goals().items():
             param_goal: GoalDefinition = param_value.goal
@@ -634,11 +667,16 @@ class GoalManager:
                 print('Unmet', {**param_value.goal_inputs,
                                 **updated_kwargs})
                 raise UnmetGoal(goal_def,
-                                phase="param",
+                                context=context,
                                 message=f"Error in param {goal}({param_name}:{param_goal.name}) -> {e}") from e
         self.log(context, "Run", updated_kwargs)
 
-        result = goal_def.execute(updated_kwargs)
+        try:
+            result = goal_def.execute(context=context, possible_kwargs=updated_kwargs)
+        except Exception as e:
+            raise UnmetGoal(goal_def,
+                            context=context,
+                            message=f"Error running {goal} -> {e}") from e
 
         for post in goal_def.post_goals:
             try:
@@ -648,7 +686,9 @@ class GoalManager:
                                   fun_kwargs=fun_kwargs)
                 results.append(result)
             except Exception as e:
-                raise UnmetGoal(goal=goal_def, phase="post", message="Error in post") from e
+                raise UnmetGoal(goal=goal_def,
+                                context=context,
+                                message="Error in post") from e
 
         self.log(context, "End", result)
         return result
@@ -709,7 +749,6 @@ class GoalManager:
                                       executor_params=pyu.params(fun).values(),
                                       goal_manager=self)
             self.add(goal_def)
-
 
 # todo: bring back for default scope
 # class GoalScope:

@@ -4,7 +4,7 @@ import re
 import xutils.data.config_utils as cu
 import xutils.data.json_utils as ju
 
-from .goal import GoalDefinition, GoalManager, GoalRef
+from .goal import GoalDefinition, GoalManager, GoalRef, GoalRunContext
 from xutils.expressions.expression_evaluator import DictVariableResolver
 from xutils.expressions.sexpression import SimpleExpressionEvaluator
 
@@ -92,25 +92,41 @@ class DynamicGoal(GoalDefinition):
     #         for item in what:
     #             self._populate_params(item)
 
-    def execute(self, possible_kwargs: Dict[str, Any]):
-        dynamic_result = self._dynamic_execute(self.goal_def, possible_kwargs)
+    def execute(self, context: GoalRunContext = None, possible_kwargs: Dict[str, Any] = None):
+        dynamic_result = self._dynamic_execute(self.goal_def,
+                                               context=context,
+                                               possible_kwargs=possible_kwargs)
         if self.exec_goal is not None:
-            return self.goal_manager.run(goal=self.exec_goal, possible_kwargs={**dynamic_result, **possible_kwargs})
+            return self.goal_manager.run(goal=self.exec_goal,
+                                         context=context,
+                                         possible_kwargs={**dynamic_result, **possible_kwargs})
         else:
             return dynamic_result
 
-    def _dynamic_execute(self, what, possible_kwargs: Dict[str, Any]):
+    def _dynamic_execute(self,
+                         what: Union[str, dict, list, Any],
+                         context: GoalRunContext = None,
+                         possible_kwargs: Dict[str, Any] = None):
         # todo: move to @functools.singledispatchmethod, bugs with List Dict
         if isinstance(what, str):
-            return self._dynamic_execute_str(what, possible_kwargs)
+            return self._dynamic_execute_str(what,
+                                             context=context,
+                                             possible_kwargs=possible_kwargs)
         elif isinstance(what, dict):
-            return self._dynamic_execute_dict(what, possible_kwargs)
+            return self._dynamic_execute_dict(what,
+                                              context=context,
+                                              possible_kwargs=possible_kwargs)
         elif isinstance(what, list):
-            return self._dynamic_execute_list(what, possible_kwargs)
+            return self._dynamic_execute_list(what,
+                                              context=context,
+                                              possible_kwargs=possible_kwargs)
         else:
             return what
 
-    def _dynamic_execute_str(self, what: str, possible_kwargs: Dict[str, Any]):
+    def _dynamic_execute_str(self,
+                             what: str,
+                             context: GoalRunContext = None,
+                             possible_kwargs: Dict[str, Any] = None):
         what = self.expression_evaluator.eval(what, DictVariableResolver(possible_kwargs))
 
         if not isinstance(what, str):
@@ -126,11 +142,16 @@ class DynamicGoal(GoalDefinition):
                     fun_kwargs=possible_kwargs.copy())
             elif run_regex_check is not None:
                 run_goal = run_regex_check.group(1)
-                return self.goal_manager.run(run_goal, fun_kwargs=possible_kwargs)
+                return self.goal_manager.run(run_goal,
+                                             context=context,
+                                             fun_kwargs=possible_kwargs)
             else:
                 return what
 
-    def _dynamic_execute_dict(self, what: Dict, possible_kwargs: Dict[str, Any]):
+    def _dynamic_execute_dict(self,
+                              what: Dict,
+                              context: GoalRunContext = None,
+                              possible_kwargs: Dict[str, Any] = None):
         dynamic_goal = self._get_dynamic_goal(what)
         if dynamic_goal is None:
             return {
@@ -139,8 +160,13 @@ class DynamicGoal(GoalDefinition):
                 for key, value in what.items()
             }
         elif dynamic_goal.now:
+            # print("dynamic_goal.py::_dynamic_execute_dict:142")
+            # print("dynamic_goal.py::_dynamic_execute_dict:143:",  what, ":(what)")
+            # print("dynamic_goal.py::_dynamic_execute_dict:144:",  dynamic_goal.kwargs, ":(dynamic_goal.kwargs)")
+            # print("dynamic_goal.py::_dynamic_execute_dict:145:",  possible_kwargs, ":(possible_kwargs)")
             return self.goal_manager.run(
                 goal=dynamic_goal.goal,
+                context=context,
                 fun_kwargs=self._dynamic_execute(
                     what=dynamic_goal.kwargs,
                     possible_kwargs=possible_kwargs.copy()),
@@ -185,7 +211,10 @@ class DynamicGoal(GoalDefinition):
         else:
             return None
 
-    def _dynamic_execute_list(self, what: List, possible_kwargs: Dict[str, Any]):
+    def _dynamic_execute_list(self,
+                              what: List,
+                              context: GoalRunContext = None,
+                              possible_kwargs: Dict[str, Any] = None):
         return [
             self._dynamic_execute(item, possible_kwargs=possible_kwargs)
             for item in what
