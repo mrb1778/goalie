@@ -260,7 +260,6 @@ def run_batch(goal_manager: GoalManager,
             goal_manager.add(DynamicGoal(name=goal_name,
                                          goal_def=goal_def,
                                          goal_manager=goal_manager))
-
     if "run" in batch:
         run = batch["run"]
         return goal_manager.run(DynamicGoal(name=":BatchGoal:",
@@ -268,3 +267,4 @@ def run_batch(goal_manager: GoalManager,
                                             goal_manager=goal_manager),
                                 fun_kwargs=run_kwargs,
                                 scope=scope)
+    return None
