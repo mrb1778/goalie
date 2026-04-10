@@ -14,5 +14,5 @@ dependencies = [
     "numpy>=2.4.4",
     "pandas>=3.0.2",
     "starlette>=1.0.0",
-    "xutils>=2.2.2"
+    "xutils @ git+https://github.com/mrb1778/xutils.git"
 ]
